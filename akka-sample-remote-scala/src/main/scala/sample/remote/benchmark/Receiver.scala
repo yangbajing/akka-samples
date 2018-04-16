@@ -1,9 +1,8 @@
 package sample.remote.benchmark
 
-import akka.actor.Actor
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorLogging, ActorSystem, Props, Timers}
 import com.typesafe.config.ConfigFactory
-import akka.actor.Props
+import scala.concurrent.duration._
 
 object Receiver {
   def main(args: Array[String]): Unit = {
@@ -12,13 +11,22 @@ object Receiver {
   }
 }
 
-class Receiver extends Actor {
+class Receiver extends Actor with ActorLogging with Timers {
   import Sender._
+
+  timers.startPeriodicTimer("tick", "tick", 5.seconds)
+@volatile  var size = 0L
+
+  override def postStop(): Unit = {
+    timers.cancelAll()
+  }
 
   def receive = {
     case m: Echo  => sender() ! m
+      log.info("received msg: " + m)
     case Shutdown => context.system.terminate()
-    case _        =>
+    case "tick" => log.info(s"tick, received size: $size")
+    case _        => size += 1
   }
 }
 

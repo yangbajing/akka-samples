@@ -1,14 +1,7 @@
 package sample.remote.benchmark
 
 import scala.concurrent.duration._
-import akka.actor.Actor
-import akka.actor.ActorIdentity
-import akka.actor.ActorRef
-import akka.actor.Identify
-import akka.actor.ReceiveTimeout
-import akka.actor.Terminated
-import akka.actor.Props
-import akka.actor.ActorSystem
+import akka.actor.{Actor, ActorIdentity, ActorLogging, ActorRef, ActorSystem, Identify, Props, ReceiveTimeout, Terminated}
 import com.typesafe.config.ConfigFactory
 
 object Sender {
@@ -16,7 +9,8 @@ object Sender {
     val system = ActorSystem("Sys", ConfigFactory.load("calculator"))
 
     val remoteHostPort = if (args.length >= 1) args(0) else "127.0.0.1:2553"
-    val remotePath = s"akka.tcp://Sys@$remoteHostPort/user/rcv"
+//    val remotePath = s"akka.tcp://Sys@$remoteHostPort/user/rcv"
+    val remotePath = s"akka://Sys@$remoteHostPort/user/rcv"
     val totalMessages = if (args.length >= 2) args(1).toInt else 500000
     val burstSize = if (args.length >= 3) args(2).toInt else 5000
     val payloadSize = if (args.length >= 4) args(3).toInt else 100
@@ -36,7 +30,7 @@ object Sender {
     extends Echo
 }
 
-class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int) extends Actor {
+class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int) extends Actor with ActorLogging {
   import Sender._
 
   val payload: Array[Byte] = Vector.fill(payloadSize)("a").mkString.getBytes
@@ -46,8 +40,10 @@ class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int)
   context.setReceiveTimeout(3.seconds)
   sendIdentifyRequest()
 
-  def sendIdentifyRequest(): Unit =
+  def sendIdentifyRequest(): Unit = {
+    log.info(s"Identify path: $path")
     context.actorSelection(path) ! Identify(path)
+  }
 
   def receive = identifying
 
@@ -76,6 +72,7 @@ class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int)
         actor ! Continue(remaining, startTime, startTime, burstSize)
 
     case c @ Continue(remaining, t0, t1, n) =>
+//      println(c)
       val now = System.nanoTime()
       val duration = (now - t0).nanos.toMillis
       val roundTripMillis = (now - t1).nanos.toMillis
@@ -87,12 +84,18 @@ class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int)
       }
 
       val nextRemaining = sendBatch(actor, remaining)
-      if (nextRemaining == 0)
+//      log.info(s"nextRemaining: $nextRemaining, duration: $duration")
+      if (nextRemaining == 0) {
+        log.info("Done")
         actor ! Done
-      else if (duration >= 500)
+      } else if (duration >= 500) {
+        log.info("duration >= 500")
         actor ! Continue(nextRemaining, now, now, burstSize)
-      else
-        actor ! c.copy(remaining = nextRemaining, burstStartTime = now, n = n + burstSize)
+      } else {
+        val data = c.copy(remaining = nextRemaining, burstStartTime = now, n = n + burstSize)
+        log.info("else: " + data)
+        actor ! data
+      }
 
     case Done =>
       val took = (System.nanoTime - startTime).nanos.toMillis
@@ -104,6 +107,7 @@ class Sender(path: String, totalMessages: Int, burstSize: Int, payloadSize: Int)
 
     case Terminated(`actor`) =>
       println("Receiver terminated")
+      context.unwatch(actor)
       context.system.terminate()
 
   }
